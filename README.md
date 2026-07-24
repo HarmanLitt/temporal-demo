@@ -1,4 +1,18 @@
-# QuickBite
+# temporal-demo
+Technical Assessment
+
+I will be using an example from my personal experience. As an integrations leader at Flyt I worked on Point of Sale integrations between restaurant brands and food delivery companies
+
+The flow is as follows:
+
+1. A user selects items and modifiers from a menu.
+2. A user confirms their order
+3. Order confirmation is sent to food delivery app
+4. Order is sent to POS
+5. Order is completed
+6. Order completion is sent from POS to food delivery app
+
+## QuickBite
 
 Food delivery UI demo. Browse a McDonald’s menu, pick modifiers, and place an order. Menu, modifiers, and order placement are mocked Kafka events in the browser.
 
