@@ -11,13 +11,13 @@ import {
 } from '@mui/material'
 import RestaurantMenuIcon from '@mui/icons-material/RestaurantMenu'
 import { fetchMenu } from './api/menuApi'
-import { submitOrder } from './api/ordersApi'
+import { cancelOrder, fetchOrderStatus, submitOrder } from './api/ordersApi'
 import { Cart, getCartTotals } from './components/Cart'
 import { MenuList } from './components/MenuList'
 import { ModifierPicker } from './components/ModifierPicker'
-import { OrderConfirmation } from './components/OrderConfirmation'
+import { OrderProgress } from './components/OrderProgress'
 import { RestaurantHeader } from './components/RestaurantHeader'
-import type { CartLine, MenuItem, Modifier, OrderConfirmation as OrderConfirmationType } from './types'
+import type { CartLine, MenuItem, Modifier, OrderStatus } from './types'
 
 function createLineId() {
   return `line-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -34,7 +34,10 @@ export default function App() {
   const [cart, setCart] = useState<CartLine[]>([])
   const [placingOrder, setPlacingOrder] = useState(false)
   const [orderError, setOrderError] = useState<string | null>(null)
-  const [confirmation, setConfirmation] = useState<OrderConfirmationType | null>(null)
+  const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null)
+  const [cancellingOrder, setCancellingOrder] = useState(false)
+  const activeOrderId = orderStatus?.orderId
+  const activeOrderStage = orderStatus?.status
 
   useEffect(() => {
     let cancelled = false
@@ -65,6 +68,39 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (
+      !activeOrderId ||
+      !activeOrderStage ||
+      ['confirmed', 'cancelled', 'failed'].includes(activeOrderStage)
+    ) {
+      return
+    }
+
+    let stopped = false
+    const pollStatus = async () => {
+      try {
+        const nextStatus = await fetchOrderStatus(activeOrderId)
+        if (!stopped) {
+          setOrderStatus(nextStatus)
+          setOrderError(null)
+        }
+      } catch {
+        if (!stopped) {
+          setOrderError('Could not refresh the order status. Retrying…')
+        }
+      }
+    }
+
+    const interval = window.setInterval(() => void pollStatus(), 500)
+    void pollStatus()
+
+    return () => {
+      stopped = true
+      window.clearInterval(interval)
+    }
+  }, [activeOrderId, activeOrderStage])
+
   function handleSelectItem(item: MenuItem) {
     setSelectedItem(item)
     setModifierOpen(true)
@@ -93,16 +129,38 @@ export default function App() {
     try {
       const { total } = getCartTotals(cart)
       const result = await submitOrder({
+        orderId: `QB-${crypto.randomUUID()}`,
+        restaurantId: 'mcdonalds-demo',
         items: cart,
         total,
         restaurant: "McDonald's",
       })
-      setConfirmation(result)
+      setOrderStatus(result)
       setCart([])
     } catch {
       setOrderError('Could not place your order. Please try again.')
     } finally {
       setPlacingOrder(false)
+    }
+  }
+
+  async function handleCancelOrder() {
+    if (!orderStatus) return
+
+    setCancellingOrder(true)
+    setOrderError(null)
+    try {
+      const update = await cancelOrder(
+        orderStatus.orderId,
+        orderStatus.restaurantId,
+      )
+      setOrderStatus((current) =>
+        current ? { ...current, ...update } : current,
+      )
+    } catch {
+      setOrderError('Could not cancel the order. Please try again.')
+    } finally {
+      setCancellingOrder(false)
     }
   }
 
@@ -171,10 +229,11 @@ export default function App() {
         onAddToCart={handleAddToCart}
       />
 
-      <OrderConfirmation
-        open={Boolean(confirmation)}
-        confirmation={confirmation}
-        onClose={() => setConfirmation(null)}
+      <OrderProgress
+        status={orderStatus}
+        cancelling={cancellingOrder}
+        onCancel={() => void handleCancelOrder()}
+        onClose={() => setOrderStatus(null)}
       />
     </Box>
   )

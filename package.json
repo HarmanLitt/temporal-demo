@@ -4,8 +4,20 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "concurrently -k -n api,payment,pos,restaurant,status,web \"npm:service:order-api\" \"npm:service:payment\" \"npm:service:pos\" \"npm:service:restaurant\" \"npm:service:status\" \"npm:dev:web\"",
+    "dev:api": "npm run service:order-api",
+    "dev:web": "vite",
+    "service:order-api": "tsx services/order-api/index.ts",
+    "service:payment": "tsx services/payment-service/index.ts",
+    "service:pos": "tsx services/pos-service/index.ts",
+    "service:restaurant": "tsx services/restaurant-service/index.ts",
+    "service:status": "tsx services/order-status-service/index.ts",
+    "start:api": "npm run service:order-api",
+    "kafka:up": "docker compose up -d kafka kafka-ui",
+    "kafka:down": "docker compose down",
+    "services:up": "docker compose up -d --build order-api payment-service pos-service restaurant-service order-status-service",
+    "services:stop": "docker compose stop order-api payment-service pos-service restaurant-service order-status-service",
+    "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -14,15 +26,24 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^9.2.0",
     "@mui/material": "^9.2.0",
+    "@temporalio/core-bridge": "^1.9.3",
+    "express": "^5.2.1",
+    "kafkajs": "^2.2.4",
+    "protobufjs": "^7.6.5",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "temporal": "^0.7.1",
+    "temporalio": "^1.9.3"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "concurrently": "^10.0.3",
     "oxlint": "^1.71.0",
+    "tsx": "^4.23.1",
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
   }

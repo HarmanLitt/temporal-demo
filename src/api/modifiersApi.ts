@@ -1,6 +1,8 @@
-import { requestModifiers } from '../kafka/mockKafka'
 import type { Modifier } from '../types'
+import { requestJson } from './http'
 
 export async function fetchModifiers(menuItemId: string): Promise<Modifier[]> {
-  return requestModifiers(menuItemId)
+  return requestJson<Modifier[]>(
+    `/api/modifiers/${encodeURIComponent(menuItemId)}`,
+  )
 }

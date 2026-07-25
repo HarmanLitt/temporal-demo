@@ -1,6 +1,6 @@
-import { requestMenu } from '../kafka/mockKafka'
 import type { MenuItem } from '../types'
+import { requestJson } from './http'
 
 export async function fetchMenu(): Promise<MenuItem[]> {
-  return requestMenu()
+  return requestJson<MenuItem[]>('/api/menu')
 }
