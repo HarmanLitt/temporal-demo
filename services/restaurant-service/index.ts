@@ -4,6 +4,7 @@ import {
   ensureTopics,
   topics,
 } from '../shared/kafka'
+import { idempotencyKey } from '../shared/idempotency'
 import { delay } from '../shared/retry'
 import { publishStatus } from '../shared/status'
 import type { Order, OrderCancellationRequested } from '../../src/types'
@@ -52,6 +53,15 @@ await posConsumer.run({
     const order = JSON.parse(message.value?.toString('utf8') ?? '{}') as Order
     if (cancelledOrders.has(order.orderId)) return
 
+    const acceptanceIdempotencyKey = idempotencyKey(
+      'accept-restaurant',
+      order.orderId,
+    )
+    console.info('[restaurant-service] requesting acceptance', {
+      orderId: order.orderId,
+      idempotencyKey: acceptanceIdempotencyKey,
+    })
+
     await publishStatus(
       producer,
       message.key,
@@ -94,6 +104,7 @@ await posConsumer.run({
 console.info('[restaurant-service] consuming POS events')
 
 async function shutdown(): Promise<void> {
+
   await Promise.all([
     posConsumer.disconnect(),
     cancellationConsumer.disconnect(),

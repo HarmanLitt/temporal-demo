@@ -49,6 +49,7 @@ function writeStatus(status: OrderStatus): void {
 
 function applyUpdate(update: OrderStatusUpdate): void {
   const current = readStatus(update.orderId)
+
   if (!current) return
 
   const terminal = ['confirmed', 'cancelled', 'failed'].includes(current.status)
@@ -82,6 +83,7 @@ await consumer.run({
   eachMessage: async ({ topic, message }) => {
     if (topic === topics.orderPlaced) {
       const order = JSON.parse(message.value?.toString('utf8') ?? '{}') as Order
+
       writeStatus(initialOrderStatus(order))
       return
     }
@@ -111,6 +113,7 @@ const server = app.listen(port, () => {
 })
 
 async function shutdown(): Promise<void> {
+
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
   })

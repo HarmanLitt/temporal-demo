@@ -38,6 +38,15 @@ export function createKafka(clientId: string): Kafka {
         : undefined,
     logLevel:
       process.env.KAFKA_LOG_LEVEL === 'debug' ? logLevel.DEBUG : logLevel.INFO,
+    retry: {
+      retries: Number(process.env.KAFKA_CONNECTION_RETRIES ?? 8),
+      initialRetryTime: Number(
+        process.env.KAFKA_RETRY_INITIAL_INTERVAL_MS ?? 300,
+      ),
+      maxRetryTime: Number(process.env.KAFKA_RETRY_MAX_INTERVAL_MS ?? 30_000),
+      factor: Number(process.env.KAFKA_RETRY_RANDOMIZATION_FACTOR ?? 0.2),
+      multiplier: Number(process.env.KAFKA_RETRY_MULTIPLIER ?? 2),
+    },
   })
 }
 
@@ -73,13 +82,21 @@ export async function ensureTopics(kafka: Kafka): Promise<void> {
 }
 
 export async function createProducer(kafka: Kafka): Promise<Producer> {
+
   const producer = kafka.producer({
     createPartitioner: Partitioners.DefaultPartitioner,
+    idempotent: true,
+    maxInFlightRequests: 1,
+    allowAutoTopicCreation: false,
+    retry: {
+      retries: Number(process.env.KAFKA_PRODUCER_RETRIES ?? 8),
+    },
   })
   await producer.connect()
   return producer
 }
 
 export function orderKey(orderId: string, restaurantId: string): string {
+
   return `${restaurantId}-${orderId}`
 }

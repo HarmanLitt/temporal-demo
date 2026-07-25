@@ -4,12 +4,12 @@ import {
   ensureTopics,
   topics,
 } from '../shared/kafka'
+import { idempotencyKey } from '../shared/idempotency'
 import { delay, retry } from '../shared/retry'
+import { paymentRetryPolicy } from '../shared/retry-policies'
 import { publishStatus } from '../shared/status'
 import type { Order, OrderCancellationRequested } from '../../src/types'
 
-const maxAttempts = Number(process.env.DEMO_MAX_ATTEMPTS ?? 3)
-const timeoutMs = Number(process.env.DEMO_ACTIVITY_TIMEOUT_MS ?? 2_000)
 const failuresBeforeSuccess = Number(
   process.env.DEMO_PAYMENT_FAILURES_BEFORE_SUCCESS ?? 0,
 )
@@ -42,8 +42,16 @@ await cancellationConsumer.run({
     ) as OrderCancellationRequested
     cancelledOrders.add(cancellation.orderId)
     console.log('[payment-service] cancellation received', cancellation)
+
     if (authorizedOrders.has(cancellation.orderId)) {
-      console.log('[payment-service] refunding payment', cancellation.orderId)
+      const refundIdempotencyKey = idempotencyKey(
+        'refund-payment',
+        cancellation.orderId,
+      )
+      console.log('[payment-service] refunding payment', {
+        orderId: cancellation.orderId,
+        idempotencyKey: refundIdempotencyKey,
+      })
       await publishStatus(
         producer,
         message.key,
@@ -86,18 +94,22 @@ await orderConsumer.run({
     }
 
     try {
+      const authorizationIdempotencyKey = idempotencyKey(
+        'authorize-payment',
+        order.orderId,
+      )
+
       await retry({
         label: 'Authorizing payment',
-        maxAttempts,
-        timeoutMs,
+        policy: paymentRetryPolicy,
         onAttempt: (attempt) =>
           publishStatus(
             producer,
             message.key,
             order.orderId,
             'authorizing_payment',
-            `Authorizing payment (attempt ${attempt} of ${maxAttempts})`,
-            { attempt, maxAttempts },
+            `Authorizing payment (attempt ${attempt} of ${paymentRetryPolicy.maximumAttempts})`,
+            { attempt, maxAttempts: paymentRetryPolicy.maximumAttempts },
           ),
         onRetry: (attempt) =>
           publishStatus(
@@ -106,9 +118,14 @@ await orderConsumer.run({
             order.orderId,
             'authorizing_payment',
             'Payment authorization failed; retrying automatically',
-            { attempt, maxAttempts },
+            { attempt, maxAttempts: paymentRetryPolicy.maximumAttempts },
           ),
         operation: async (attempt) => {
+          console.info('[payment-service] authorizing payment', {
+            orderId: order.orderId,
+            attempt,
+            idempotencyKey: authorizationIdempotencyKey,
+          })
           await delay(700)
           if (attempt <= failuresBeforeSuccess) {
             throw new Error('Simulated temporary payment failure')
@@ -117,6 +134,14 @@ await orderConsumer.run({
       })
 
       if (cancelledOrders.has(order.orderId)) {
+        const refundIdempotencyKey = idempotencyKey(
+          'refund-payment',
+          order.orderId,
+        )
+        console.info('[payment-service] refunding payment', {
+          orderId: order.orderId,
+          idempotencyKey: refundIdempotencyKey,
+        })
         await publishStatus(
           producer,
           message.key,
@@ -149,7 +174,16 @@ await orderConsumer.run({
 
       await producer.send({
         topic: topics.paymentAuthorized,
-        messages: [{ key: message.key, value: JSON.stringify(order) }],
+
+        messages: [
+          {
+            key: message.key,
+            value: JSON.stringify(order),
+            headers: {
+              'idempotency-key': authorizationIdempotencyKey,
+            },
+          },
+        ],
       })
     } catch (error) {
       await publishStatus(
@@ -166,6 +200,7 @@ await orderConsumer.run({
 console.info('[payment-service] consuming order events')
 
 async function shutdown(): Promise<void> {
+
   await Promise.all([
     orderConsumer.disconnect(),
     cancellationConsumer.disconnect(),

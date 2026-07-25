@@ -7,6 +7,7 @@ import {
   orderKey,
   topics,
 } from '../shared/kafka'
+import { idempotencyKey } from '../shared/idempotency'
 import { initialOrderStatus, publishStatus } from '../shared/status'
 import { menuItems } from '../../src/mock/menuData'
 import { modifiersByMenuItemId } from '../../src/mock/modifierData'
@@ -43,10 +44,17 @@ app.post('/api/orders', async (request, response) => {
   const order = request.body as Order
 
   const key = orderKey(order.orderId, order.restaurantId)
+  const commandIdempotencyKey = idempotencyKey('place-order', order.orderId)
 
   await producer.send({
     topic: topics.orderPlaced,
-    messages: [{ key, value: JSON.stringify(order) }],
+    messages: [
+      {
+        key,
+        value: JSON.stringify(order),
+        headers: { 'idempotency-key': commandIdempotencyKey },
+      },
+    ],
   })
 
   response.status(202).json(initialOrderStatus(order))
@@ -65,10 +73,20 @@ app.post('/api/orders/:orderId/cancel', async (request, response) => {
     requestedAt: new Date().toISOString(),
   }
   const key = orderKey(cancellation.orderId, cancellation.restaurantId)
+  const commandIdempotencyKey = idempotencyKey(
+    'cancel-order',
+    cancellation.orderId,
+  )
 
   await producer.send({
     topic: topics.orderCancellationRequested,
-    messages: [{ key, value: JSON.stringify(cancellation) }],
+    messages: [
+      {
+        key,
+        value: JSON.stringify(cancellation),
+        headers: { 'idempotency-key': commandIdempotencyKey },
+      },
+    ],
   })
 
   await publishStatus(
@@ -102,6 +120,7 @@ server = app.listen(port, () => {
 })
 
 async function shutdown(): Promise<void> {
+
   if (server) {
     await new Promise<void>((resolve, reject) => {
       server?.close((error) => (error ? reject(error) : resolve()))

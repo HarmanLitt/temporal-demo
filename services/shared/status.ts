@@ -43,6 +43,7 @@ export async function publishStatus(
 
   await producer.send({
     topic: topics.orderStatus,
+
     messages: [{ key: messageKey, value: JSON.stringify(update) }],
   })
 }

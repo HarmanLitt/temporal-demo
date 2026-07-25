@@ -2,6 +2,14 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 export { delay }
 
+export type RetryPolicy = {
+  maximumAttempts: number
+  startToCloseTimeoutMs: number
+  initialIntervalMs: number
+  backoffCoefficient: number
+  maximumIntervalMs: number
+}
+
 export async function withTimeout<T>(
   operation: () => Promise<T>,
   timeoutMs: number,
@@ -19,42 +27,51 @@ export async function withTimeout<T>(
       }),
     ])
   } finally {
+
     if (timeout) clearTimeout(timeout)
   }
 }
 
 export async function retry({
   label,
-  maxAttempts,
-  timeoutMs,
+  policy,
   operation,
   onAttempt,
   onRetry,
 }: {
   label: string
-  maxAttempts: number
-  timeoutMs: number
+  policy: RetryPolicy
   operation: (attempt: number) => Promise<void>
   onAttempt: (attempt: number) => Promise<void>
   onRetry: (attempt: number, error: unknown) => Promise<void>
 }): Promise<void> {
   let lastError: unknown
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= policy.maximumAttempts; attempt += 1) {
+
     await onAttempt(attempt)
     try {
-      await withTimeout(() => operation(attempt), timeoutMs, label)
+      await withTimeout(
+        () => operation(attempt),
+        policy.startToCloseTimeoutMs,
+        label,
+      )
       return
     } catch (error) {
       lastError = error
-      if (attempt < maxAttempts) {
+      if (attempt < policy.maximumAttempts) {
         await onRetry(attempt, error)
-        await delay(500 * attempt)
+        const retryDelayMs = Math.min(
+          policy.initialIntervalMs *
+            policy.backoffCoefficient ** (attempt - 1),
+          policy.maximumIntervalMs,
+        )
+        await delay(retryDelayMs)
       }
     }
   }
 
   throw lastError instanceof Error
     ? lastError
-    : new Error(`${label} failed after ${maxAttempts} attempts`)
+    : new Error(`${label} failed after ${policy.maximumAttempts} attempts`)
 }

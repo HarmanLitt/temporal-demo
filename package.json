@@ -26,6 +26,7 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^9.2.0",
     "@mui/material": "^9.2.0",
+    "@temporalio/activity": "^1.9.3",
     "@temporalio/core-bridge": "^1.9.3",
     "express": "^5.2.1",
     "kafkajs": "^2.2.4",

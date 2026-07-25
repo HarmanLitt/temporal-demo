@@ -4,12 +4,12 @@ import {
   ensureTopics,
   topics,
 } from '../shared/kafka'
+import { idempotencyKey } from '../shared/idempotency'
 import { delay, retry } from '../shared/retry'
+import { posRetryPolicy } from '../shared/retry-policies'
 import { publishStatus } from '../shared/status'
 import type { Order, OrderCancellationRequested } from '../../src/types'
 
-const maxAttempts = Number(process.env.DEMO_MAX_ATTEMPTS ?? 3)
-const timeoutMs = Number(process.env.DEMO_ACTIVITY_TIMEOUT_MS ?? 2_000)
 const failuresBeforeSuccess = Number(
   process.env.DEMO_POS_FAILURES_BEFORE_SUCCESS ?? 1,
 )
@@ -53,21 +53,22 @@ await paymentConsumer.run({
     if (cancelledOrders.has(order.orderId)) return
 
     try {
+      const posIdempotencyKey = idempotencyKey('submit-pos', order.orderId)
+
       await retry({
         label: 'Submitting order to POS',
-        maxAttempts,
-        timeoutMs,
+        policy: posRetryPolicy,
         onAttempt: (attempt) =>
           publishStatus(
             producer,
             message.key,
             order.orderId,
             'submitting_pos',
-            `Submitting order to POS (attempt ${attempt} of ${maxAttempts})`,
+            `Submitting order to POS (attempt ${attempt} of ${posRetryPolicy.maximumAttempts})`,
             {
               paymentAuthorized: true,
               attempt,
-              maxAttempts,
+              maxAttempts: posRetryPolicy.maximumAttempts,
             },
           ),
         onRetry: (attempt) =>
@@ -80,10 +81,15 @@ await paymentConsumer.run({
             {
               paymentAuthorized: true,
               attempt,
-              maxAttempts,
+              maxAttempts: posRetryPolicy.maximumAttempts,
             },
           ),
         operation: async (attempt) => {
+          console.info('[pos-service] submitting order', {
+            orderId: order.orderId,
+            attempt,
+            idempotencyKey: posIdempotencyKey,
+          })
           await delay(700)
           if (attempt <= failuresBeforeSuccess) {
             throw new Error('Simulated temporary POS failure')
@@ -95,7 +101,16 @@ await paymentConsumer.run({
 
       await producer.send({
         topic: topics.posSubmitted,
-        messages: [{ key: message.key, value: JSON.stringify(order) }],
+
+        messages: [
+          {
+            key: message.key,
+            value: JSON.stringify(order),
+            headers: {
+              'idempotency-key': posIdempotencyKey,
+            },
+          },
+        ],
       })
     } catch (error) {
       await publishStatus(
@@ -113,6 +128,7 @@ await paymentConsumer.run({
 console.info('[pos-service] consuming payment events')
 
 async function shutdown(): Promise<void> {
+
   await Promise.all([
     paymentConsumer.disconnect(),
     cancellationConsumer.disconnect(),
