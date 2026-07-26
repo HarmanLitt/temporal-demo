@@ -65,7 +65,7 @@ app.post('/api/orders/:orderId/cancel', async (request, response) => {
   )
 
   const handle = temporal.workflow.getHandle(orderId)
-  await handle.signal('cancelOrder')
+  await handle.cancel()
 
   const update: OrderStatusUpdate = {
     orderId,

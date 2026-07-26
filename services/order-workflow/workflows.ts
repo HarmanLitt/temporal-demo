@@ -2,7 +2,6 @@ import {
   CancellationScope,
   isCancellation,
   proxyActivities,
-  setHandler,
 } from '@temporalio/workflow'
 import type * as activities from './activities'
 import {
@@ -11,7 +10,6 @@ import {
   restaurantActivityOptions,
   statusActivityOptions,
 } from './policies'
-import { cancelOrderSignal } from './signals'
 import type { Order } from '../../src/types'
 
 const status = proxyActivities<
@@ -40,87 +38,67 @@ const restaurant = proxyActivities<
 })
 
 export async function orderFulfillmentWorkflow(order: Order): Promise<void> {
-  let cancelled = false
   let authorization:
     | Awaited<ReturnType<typeof payment.authorizePayment>>
     | undefined
   let posSubmitted = false
-  let activeScope: CancellationScope | undefined
-
-  setHandler(cancelOrderSignal, () => {
-    cancelled = true
-    activeScope?.cancel()
-  })
-
-  await status.seedStatus(order)
 
   try {
-    activeScope = new CancellationScope()
-    await activeScope.run(async () => {
-      if (cancelled) {
-        throw new Error('ORDER_CANCELLED')
-      }
+    await status.seedStatus(order)
 
-      authorization = await payment.authorizePayment({
-        orderId: order.orderId,
-        amount: order.total,
-      })
+    authorization = await payment.authorizePayment({
+      orderId: order.orderId,
+      amount: order.total,
+    })
 
-      if (cancelled) {
-        throw new Error('ORDER_CANCELLED')
-      }
+    await status.publishOrderStatus({
+      orderId: order.orderId,
+      status: 'payment_authorized',
+      message: 'Payment authorized',
+      paymentAuthorized: true,
+    })
 
-      await status.publishOrderStatus({
-        orderId: order.orderId,
-        status: 'payment_authorized',
-        message: 'Payment authorized',
-        paymentAuthorized: true,
-      })
+    await pos.submitOrderToPos(order)
+    posSubmitted = true
 
-      await pos.submitOrderToPos(order)
-      posSubmitted = true
+    await restaurant.waitForRestaurantAcceptance(order)
 
-      if (cancelled) {
-        throw new Error('ORDER_CANCELLED')
-      }
-
-      await restaurant.waitForRestaurantAcceptance(order)
-
-      if (cancelled) {
-        throw new Error('ORDER_CANCELLED')
-      }
-
-      await status.publishOrderStatus({
-        orderId: order.orderId,
-        status: 'confirmed',
-        message: 'Restaurant accepted the order',
-        paymentAuthorized: true,
-      })
+    await status.publishOrderStatus({
+      orderId: order.orderId,
+      status: 'confirmed',
+      message: 'Restaurant accepted the order',
+      paymentAuthorized: true,
     })
   } catch (error) {
-    await compensate(order.orderId, posSubmitted, authorization)
+    await CancellationScope.nonCancellable(async () => {
+      await compensate(order.orderId, posSubmitted, authorization)
 
-    if (cancelled || isCancellation(error) || isOrderCancelled(error)) {
+      if (isCancellation(error)) {
+        await status.publishOrderStatus({
+          orderId: order.orderId,
+          status: 'cancelled',
+          message: describeCancellation(posSubmitted, Boolean(authorization)),
+          paymentAuthorized: Boolean(authorization),
+          refunded: Boolean(authorization),
+          posVoided: posSubmitted,
+        })
+        return
+      }
+
       await status.publishOrderStatus({
         orderId: order.orderId,
-        status: 'cancelled',
-        message: describeCancellation(posSubmitted, Boolean(authorization)),
+        status: 'failed',
+        message:
+          error instanceof Error ? error.message : 'Order fulfillment failed',
         paymentAuthorized: Boolean(authorization),
         refunded: Boolean(authorization),
         posVoided: posSubmitted,
       })
-      return
-    }
-
-    await status.publishOrderStatus({
-      orderId: order.orderId,
-      status: 'failed',
-      message:
-        error instanceof Error ? error.message : 'Order fulfillment failed',
-      paymentAuthorized: Boolean(authorization),
-      refunded: Boolean(authorization),
-      posVoided: posSubmitted,
     })
+
+    if (isCancellation(error)) {
+      throw error
+    }
   }
 }
 
@@ -154,8 +132,4 @@ function describeCancellation(
     return 'Order cancelled and payment refunded'
   }
   return 'Order cancelled before payment authorization'
-}
-
-function isOrderCancelled(error: unknown): boolean {
-  return error instanceof Error && error.message === 'ORDER_CANCELLED'
 }

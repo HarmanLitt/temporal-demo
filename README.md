@@ -67,13 +67,13 @@ npm run dev:web
 5. Activities update the Order Status service over HTTP; SQLite stores the read model.
 6. The browser polls `GET /api/order-status/:orderId` and displays live progress.
 7. Payment and POS use Temporal retry policies; the demo intentionally fails the first POS attempt.
-8. `POST /api/orders/:orderId/cancel` signals the workflow. If payment was authorized, the workflow refunds before marking the order cancelled.
+8. `POST /api/orders/:orderId/cancel` requests cancellation of the workflow (Temporal's native cancellation). If payment was authorized, the workflow refunds before marking the order cancelled.
 
 ## Services
 
 - `services/order-api` — HTTP commands and Temporal client
 - `services/worker` — Temporal worker for the order task queue
-- `services/order-workflow` — workflow, signals, policies, and activity re-exports
+- `services/order-workflow` — workflow, policies, and activity re-exports
 - `services/payment-service/activities.ts` — payment authorization and refund
 - `services/pos-service/activities.ts` — POS submission
 - `services/restaurant-service/activities.ts` — restaurant acceptance
