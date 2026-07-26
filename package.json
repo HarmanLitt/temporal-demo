@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "concurrently -k -n api,worker,status,web \"npm:service:order-api\" \"npm:service:worker\" \"npm:service:status\" \"npm:dev:web\"",
     "dev:api": "npm run service:order-api",

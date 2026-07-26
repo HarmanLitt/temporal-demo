@@ -1,4 +1,5 @@
 import {
+  ApplicationFailure,
   CancellationScope,
   isCancellation,
   proxyActivities,
@@ -70,19 +71,31 @@ export async function orderFulfillmentWorkflow(order: Order): Promise<void> {
       paymentAuthorized: true,
     })
   } catch (error) {
-    await CancellationScope.nonCancellable(async () => {
-      await compensate(order.orderId, posSubmitted, authorization)
+    const compensation = await CancellationScope.nonCancellable(async () => {
+      const result = await compensate(order.orderId, posSubmitted, authorization)
+
+      if (result.errors.length > 0) {
+        await status.publishOrderStatus({
+          orderId: order.orderId,
+          status: 'failed',
+          message: describeCompensationFailure(result, posSubmitted, authorization),
+          paymentAuthorized: Boolean(authorization),
+          refunded: result.refunded,
+          posVoided: result.posVoided,
+        })
+        return result
+      }
 
       if (isCancellation(error)) {
         await status.publishOrderStatus({
           orderId: order.orderId,
           status: 'cancelled',
-          message: describeCancellation(posSubmitted, Boolean(authorization)),
+          message: describeCancellation(result.posVoided, result.refunded),
           paymentAuthorized: Boolean(authorization),
-          refunded: Boolean(authorization),
-          posVoided: posSubmitted,
+          refunded: result.refunded,
+          posVoided: result.posVoided,
         })
-        return
+        return result
       }
 
       await status.publishOrderStatus({
@@ -91,15 +104,42 @@ export async function orderFulfillmentWorkflow(order: Order): Promise<void> {
         message:
           error instanceof Error ? error.message : 'Order fulfillment failed',
         paymentAuthorized: Boolean(authorization),
-        refunded: Boolean(authorization),
-        posVoided: posSubmitted,
+        refunded: result.refunded,
+        posVoided: result.posVoided,
       })
+      return result
     })
+
+    if (compensation.errors.length > 0) {
+      throw ApplicationFailure.create({
+        type: 'CompensationFailed',
+        nonRetryable: true,
+        message: describeCompensationFailure(
+          compensation,
+          posSubmitted,
+          authorization,
+        ),
+        details: [
+          {
+            orderId: order.orderId,
+            posVoided: compensation.posVoided,
+            refunded: compensation.refunded,
+            errors: compensation.errors.map(errorMessage),
+          },
+        ],
+      })
+    }
 
     if (isCancellation(error)) {
       throw error
     }
   }
+}
+
+type CompensationResult = {
+  posVoided: boolean
+  refunded: boolean
+  errors: unknown[]
 }
 
 async function compensate(
@@ -108,17 +148,56 @@ async function compensate(
   authorization:
     | Awaited<ReturnType<typeof payment.authorizePayment>>
     | undefined,
-): Promise<void> {
+): Promise<CompensationResult> {
+  const result: CompensationResult = {
+    posVoided: false,
+    refunded: false,
+    errors: [],
+  }
+
   if (posSubmitted) {
-    await pos.voidPosOrder({ orderId })
+    try {
+      await pos.voidPosOrder({ orderId })
+      result.posVoided = true
+    } catch (error) {
+      result.errors.push(error)
+    }
   }
 
   if (authorization) {
-    await payment.refundPayment({
-      orderId,
-      authorizationId: authorization.authorizationId,
-    })
+    try {
+      await payment.refundPayment({
+        orderId,
+        authorizationId: authorization.authorizationId,
+      })
+      result.refunded = true
+    } catch (error) {
+      result.errors.push(error)
+    }
   }
+
+  return result
+}
+
+function describeCompensationFailure(
+  result: CompensationResult,
+  posSubmitted: boolean,
+  authorization: unknown,
+): string {
+  const pending: string[] = []
+  if (posSubmitted && !result.posVoided) {
+    pending.push('POS ticket void')
+  }
+  if (authorization && !result.refunded) {
+    pending.push('payment refund')
+  }
+  return `Compensation incomplete (${pending.join(' and ')} failed) — manual intervention required: ${result.errors
+    .map(errorMessage)
+    .join('; ')}`
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function describeCancellation(
