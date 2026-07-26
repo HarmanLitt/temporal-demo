@@ -65,10 +65,6 @@ npm run dev:web
 
 Task queue default: `quickbite-orders`.
 
-Demo behavior can be adjusted with `DEMO_MAX_ATTEMPTS`, `DEMO_PAYMENT_FAILURES_BEFORE_SUCCESS`, `DEMO_POS_FAILURES_BEFORE_SUCCESS`, `DEMO_RESTAURANT_ACCEPTANCE_DELAY_MS`, and `DEMO_RESTAURANT_ACCEPTANCE_TIMEOUT_MS`.
-
-Order statuses are persisted in `data/order-status.db`. Docker uses a named volume so the database survives container replacement.
-
 ## Temporal configuration
 
 ```bash
