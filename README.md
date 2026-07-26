@@ -14,99 +14,83 @@ The flow is as follows:
 
 ## QuickBite
 
-Food delivery UI demo. Browse a McDonald’s menu, pick modifiers, and place an order. HTTP requests are decoupled from Kafka: reads use normal API responses, while order processing uses asynchronous Kafka events.
+Food delivery UI demo. Browse a McDonald’s menu, pick modifiers, and place an order. HTTP reads stay synchronous, while order fulfillment is orchestrated by Temporal.
 
 ## Stack
 
 - Vite + React + TypeScript
 - Material UI
-- Express + KafkaJS
-- Apache Kafka in KRaft mode
+- Express
+- Temporal (workflows and activities)
 - SQLite order-status database
 
 ## Run locally
 
 ```bash
 npm install
-npm run kafka:up
+npm run temporal:up
 npm run dev
 ```
 
-`npm run dev` starts six separate local processes: the React UI and five independently running services.
+`npm run dev` starts four local processes: Order API, Temporal worker, Order Status service, and the React UI.
 
-Open http://localhost:5173. The Order API runs on port 3001, the Order Status API runs on port 3002, Kafka runs on port 9092, and Kafka UI is available at http://localhost:8080.
+Open http://localhost:5173. The Order API runs on port 3001, the Order Status API on port 3002, Temporal on port 7233, and Temporal UI at http://localhost:8233.
 
-To run the five services as separate Docker containers instead:
+To run the app services as Docker containers instead:
 
 ```bash
+npm run temporal:up
 npm run services:up
 npm run dev:web
 ```
 
 ## Scripts
 
-- `npm run dev` — start all five services and the Vite dev server
+- `npm run dev` — start API, worker, status service, and Vite
 - `npm run dev:api` — start only the Order API
 - `npm run dev:web` — start only the Vite dev server
-- `npm run service:payment` — start only the Payment service
-- `npm run service:pos` — start only the POS integration service
-- `npm run service:restaurant` — start only the Restaurant service
+- `npm run service:worker` — start only the Temporal worker
 - `npm run service:status` — start only the Order Status service
-- `npm run kafka:up` — start the local Kafka broker and Kafka UI
-- `npm run services:up` — build and start all five service containers
-- `npm run services:stop` — stop all five service containers
-- `npm run kafka:down` — stop the local Kafka broker
+- `npm run temporal:up` — start Temporal, Postgres, and Temporal UI
+- `npm run services:up` — build and start app service containers
+- `npm run services:stop` — stop app service containers
+- `npm run temporal:down` — stop Temporal infrastructure
 - `npm run build` — typecheck the frontend and server, then build the frontend
 - `npm run preview` — preview the production build
 
 ## How it works
 
 1. Menu and modifier endpoints return data directly over HTTP.
-2. The Order API accepts `POST /api/orders` and publishes `order.placed`.
-3. The API immediately returns `202 Accepted`; it does not wait for a Kafka consumer.
-4. The Payment service consumes the order and publishes `payment.authorized`.
-5. The POS service consumes that event and publishes `pos.submitted`.
-6. The Restaurant service consumes the POS event and publishes acceptance progress.
-7. Every stage is also published to `order.status`.
-8. The Order Status service consumes statuses into SQLite and serves `GET /api/order-status/:orderId`.
-9. The browser polls that endpoint and displays live progress.
-10. Payment and POS operations have timeouts and automatic attempts; the demo intentionally retries the first POS attempt.
-11. `POST /api/orders/:orderId/cancel` publishes a cancellation request. If payment was authorized, the Payment service refunds it before marking the order cancelled.
+2. The Order API accepts `POST /api/orders` and starts `orderFulfillmentWorkflow` with `workflowId = orderId`.
+3. The API immediately returns `202 Accepted`; Temporal owns the remaining work.
+4. The worker runs payment authorization, POS submission, and restaurant acceptance as activities.
+5. Activities update the Order Status service over HTTP; SQLite stores the read model.
+6. The browser polls `GET /api/order-status/:orderId` and displays live progress.
+7. Payment and POS use Temporal retry policies; the demo intentionally fails the first POS attempt.
+8. `POST /api/orders/:orderId/cancel` signals the workflow. If payment was authorized, the workflow refunds before marking the order cancelled.
 
 ## Services
 
-- `services/order-api` — HTTP commands and Kafka event production
-- `services/payment-service` — payment authorization and refunds
-- `services/pos-service` — POS submission and retry behavior
-- `services/restaurant-service` — restaurant acceptance and timeout behavior
-- `services/order-status-service` — Kafka read model, SQLite, and status HTTP API
+- `services/order-api` — HTTP commands and Temporal client
+- `services/worker` — Temporal worker for the order task queue
+- `services/order-workflow` — workflow, signals, policies, and activity re-exports
+- `services/payment-service/activities.ts` — payment authorization and refund
+- `services/pos-service/activities.ts` — POS submission
+- `services/restaurant-service/activities.ts` — restaurant acceptance
+- `services/order-status-service` — SQLite read model, status HTTP API, and status activities
 
-Topics default to three partitions. Order messages use
-`restaurantId-orderId` as their Kafka key, keeping all events for a given order
-on the same partition.
+Task queue default: `quickbite-orders`.
 
-The topics are:
-
-- `quickbite.order.placed`
-- `quickbite.order.status`
-- `quickbite.payment.authorized`
-- `quickbite.pos.submitted`
-- `quickbite.order.cancellation-requested`
-
-Demo retry and timeout behavior can be adjusted with `DEMO_MAX_ATTEMPTS`, `DEMO_ACTIVITY_TIMEOUT_MS`, `DEMO_POS_FAILURES_BEFORE_SUCCESS`, `DEMO_RESTAURANT_ACCEPTANCE_DELAY_MS`, and `DEMO_RESTAURANT_ACCEPTANCE_TIMEOUT_MS`.
+Demo behavior can be adjusted with `DEMO_MAX_ATTEMPTS`, `DEMO_PAYMENT_FAILURES_BEFORE_SUCCESS`, `DEMO_POS_FAILURES_BEFORE_SUCCESS`, `DEMO_RESTAURANT_ACCEPTANCE_DELAY_MS`, and `DEMO_RESTAURANT_ACCEPTANCE_TIMEOUT_MS`.
 
 Order statuses are persisted in `data/order-status.db`. Docker uses a named volume so the database survives container replacement.
 
-## External Kafka
-
-The bridge defaults to `localhost:9092`. Configure another cluster with environment variables:
+## Temporal configuration
 
 ```bash
-KAFKA_BROKERS=broker.example.com:9092 \
-KAFKA_SSL=true \
-KAFKA_USERNAME=your-api-key \
-KAFKA_PASSWORD=your-api-secret \
+TEMPORAL_ADDRESS=localhost:7233 \
+TEMPORAL_NAMESPACE=default \
+TEMPORAL_ORDER_TASK_QUEUE=quickbite-orders \
+ORDER_STATUS_BASE_URL=http://localhost:3002 \
 npm run dev
 ```
-
-Topic names, group IDs, partition count, and service ports can also be overridden; see `services/shared/kafka.ts`.

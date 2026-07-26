@@ -65,7 +65,6 @@ export function ModifierPicker({
         if (cancelled) return
         setModifiers(data)
 
-        // Pre-select the first option in each single-choice group.
         const defaults = new Set<string>()
         const groups = groupModifiers(data)
         for (const groupMods of groups.values()) {

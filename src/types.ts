@@ -36,6 +36,7 @@ export type OrderStage =
   | 'submitting_pos'
   | 'waiting_restaurant'
   | 'cancellation_requested'
+  | 'voiding_pos'
   | 'refunding'
   | 'confirmed'
   | 'cancelled'
@@ -52,6 +53,7 @@ export type OrderStatus = {
   itemCount: number
   paymentAuthorized: boolean
   refunded: boolean
+  posVoided?: boolean
   attempt?: number
   maxAttempts?: number
 }
@@ -69,6 +71,7 @@ export type OrderStatusUpdate = Pick<
       | 'itemCount'
       | 'paymentAuthorized'
       | 'refunded'
+      | 'posVoided'
       | 'attempt'
       | 'maxAttempts'
     >

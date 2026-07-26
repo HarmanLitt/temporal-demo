@@ -1,11 +1,4 @@
-import type { Producer } from 'kafkajs'
-import { topics } from './kafka'
-import type {
-  Order,
-  OrderAccepted,
-  OrderStage,
-  OrderStatusUpdate,
-} from '../../src/types'
+import type { Order, OrderAccepted, OrderStage, OrderStatusUpdate } from '../../src/types'
 
 export function initialOrderStatus(order: Order): OrderAccepted {
   return {
@@ -22,9 +15,7 @@ export function initialOrderStatus(order: Order): OrderAccepted {
   }
 }
 
-export async function publishStatus(
-  producer: Producer,
-  messageKey: Buffer | string | null,
+export function buildStatusUpdate(
   orderId: string,
   status: OrderStage,
   message: string,
@@ -32,18 +23,12 @@ export async function publishStatus(
     OrderStatusUpdate,
     'orderId' | 'status' | 'message' | 'updatedAt'
   > = {},
-): Promise<void> {
-  const update: OrderStatusUpdate = {
+): OrderStatusUpdate {
+  return {
     orderId,
     status,
     message,
     updatedAt: new Date().toISOString(),
     ...changes,
   }
-
-  await producer.send({
-    topic: topics.orderStatus,
-
-    messages: [{ key: messageKey, value: JSON.stringify(update) }],
-  })
 }

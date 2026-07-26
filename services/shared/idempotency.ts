@@ -4,6 +4,7 @@ export type IdempotentOperation =
   | 'authorize-payment'
   | 'refund-payment'
   | 'submit-pos'
+  | 'void-pos'
   | 'accept-restaurant'
 
 export function idempotencyKey(

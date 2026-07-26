@@ -1,169 +1,75 @@
-# Docker runs applications in isolated containers. Docker Compose reads this
-# file and starts multiple related containers on one private network.
-#
-# Commands:
-#   docker compose up -d   Start containers in the background.
-#   docker compose ps      Show their status.
-#   docker compose down    Stop and remove them.
-
-# A "service" is a container definition. Compose creates DNS names matching
-# service names, so kafka-ui can reach the broker using the hostname `kafka`.
 services:
-  # The Kafka broker stores topics, partitions, messages, and consumer offsets.
-  kafka:
-    # An image is the packaged filesystem and startup command for a container.
-    # Docker downloads this Apache Kafka image when it is not available locally.
-    image: apache/kafka:4.1.1
-
-    # Map host port 9092 to container port 9092. This lets the Node server,
-    # which runs on the Mac rather than in Docker, connect to localhost:9092.
-    ports:
-      - "9092:9092"
-
-    # Environment variables configure the Kafka process inside the container.
+  postgresql:
+    image: postgres:16
     environment:
-      # This broker's unique numeric ID within the Kafka cluster.
-      KAFKA_NODE_ID: 1
-
-      # KRaft mode lets Kafka manage its own metadata without ZooKeeper. This
-      # single container acts as both data broker and metadata controller.
-      KAFKA_PROCESS_ROLES: broker,controller
-
-      # Listeners are network sockets Kafka opens:
-      # - INTERNAL: traffic from other Docker containers.
-      # - EXTERNAL: traffic from applications running on the Mac.
-      # - CONTROLLER: internal KRaft cluster coordination.
-      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
-
-      # Advertised listeners are addresses Kafka gives back to clients after
-      # their initial connection. `kafka` works as Docker-internal DNS, while
-      # localhost works for the Node process running directly on the Mac.
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
-
-      # This local demo uses unencrypted PLAINTEXT on all listeners. Production
-      # Kafka should normally use SSL and authentication.
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-
-      # Tell Kafka which listener is reserved for KRaft controller traffic.
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
-      # Brokers would use INTERNAL to communicate with each other in a cluster.
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-
-      # A controller quorum normally lists several controller nodes. This demo
-      # has one controller (node 1) reachable inside its container on port 9093.
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-
-      # Kafka creates internal topics for offsets and transactions. Replication
-      # factor 1 is required because this demo has only one broker. Production
-      # clusters usually use three replicas so data survives broker failures.
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
-      # Avoid a development startup delay before assigning partitions to the
-      # first consumer in a new consumer group.
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-
-      # Default for topics Kafka auto-creates. The Node application explicitly
-      # creates its own topics with three partitions in server/kafka.ts.
-      KAFKA_NUM_PARTITIONS: 1
-
-    # A health check runs inside the container. Listing topics succeeds only
-    # after the broker can accept Kafka protocol requests.
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    ports:
+      - "5432:5432"
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list",
-        ]
+      test: ['CMD-SHELL', 'pg_isready -U temporal']
       interval: 5s
       timeout: 5s
       retries: 12
 
-  # Kafka UI is a browser-based tool for inspecting brokers, topics, messages,
-  # partitions, and consumer groups. Open it at http://localhost:8080.
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-
-    # Map the UI's container port 8080 to the same port on the Mac.
-    ports:
-      - "8080:8080"
-
-    environment:
-      # Display name shown in Kafka UI's cluster selector.
-      KAFKA_CLUSTERS_0_NAME: quickbite-local
-
-      # Kafka UI runs inside Docker, so it must use Kafka's INTERNAL listener
-      # and Docker hostname—not localhost, which would refer to the UI itself.
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-
-    # Wait for the Kafka health check before starting the UI. This avoids
-    # connection errors while the broker is still initializing.
+  temporal:
+    image: temporalio/auto-setup:1.28.0
     depends_on:
-      kafka:
+      postgresql:
         condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: postgresql
+    ports:
+      - "7233:7233"
 
-  # Public HTTP command service. It publishes orders but performs no workflow
-  # steps itself.
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "8233:8080"
+
   order-api:
     build: .
     command: npm run service:order-api
     ports:
       - "3001:3001"
     environment:
-      KAFKA_BROKERS: kafka:29092
       ORDER_API_PORT: 3001
+      TEMPORAL_ADDRESS: temporal:7233
+      ORDER_STATUS_BASE_URL: http://order-status-service:3002
     depends_on:
-      kafka:
-        condition: service_healthy
+      - temporal
+      - order-status-service
 
-  # Each worker below is a separate deployable process with its own Kafka
-  # consumer group and no shared application memory.
-  payment-service:
+  worker:
     build: .
-    command: npm run service:payment
+    command: npm run service:worker
     environment:
-      KAFKA_BROKERS: kafka:29092
-    depends_on:
-      kafka:
-        condition: service_healthy
-
-  pos-service:
-    build: .
-    command: npm run service:pos
-    environment:
-      KAFKA_BROKERS: kafka:29092
+      TEMPORAL_ADDRESS: temporal:7233
+      ORDER_STATUS_BASE_URL: http://order-status-service:3002
       DEMO_POS_FAILURES_BEFORE_SUCCESS: 1
     depends_on:
-      kafka:
-        condition: service_healthy
+      - temporal
+      - order-status-service
 
-  restaurant-service:
-    build: .
-    command: npm run service:restaurant
-    environment:
-      KAFKA_BROKERS: kafka:29092
-    depends_on:
-      kafka:
-        condition: service_healthy
-
-  # This service owns the query API and the persistent SQLite status database.
   order-status-service:
     build: .
     command: npm run service:status
     ports:
       - "3002:3002"
     environment:
-      KAFKA_BROKERS: kafka:29092
       ORDER_STATUS_PORT: 3002
       ORDER_STATUS_DB_PATH: /app/data/order-status.db
     volumes:
       - order-status-data:/app/data
-    depends_on:
-      kafka:
-        condition: service_healthy
 
 volumes:
-  # Named volumes survive container replacement and Docker Compose restarts.
   order-status-data:

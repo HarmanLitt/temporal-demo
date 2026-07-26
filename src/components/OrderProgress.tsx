@@ -27,6 +27,7 @@ const activeStepByStatus: Record<OrderStage, number> = {
   submitting_pos: 1,
   waiting_restaurant: 2,
   cancellation_requested: 2,
+  voiding_pos: 1,
   refunding: 2,
   confirmed: 3,
   cancelled: 2,
@@ -58,6 +59,7 @@ export function OrderProgress({
   const canCancel =
     !terminal &&
     status.status !== 'cancellation_requested' &&
+    status.status !== 'voiding_pos' &&
     status.status !== 'refunding'
 
   const title =
@@ -119,6 +121,9 @@ export function OrderProgress({
           )}
           {status.refunded && (
             <Chip size="small" color="warning" label="Payment refunded" />
+          )}
+          {status.posVoided && (
+            <Chip size="small" color="warning" label="POS ticket voided" />
           )}
           {status.attempt && status.maxAttempts && (
             <Chip

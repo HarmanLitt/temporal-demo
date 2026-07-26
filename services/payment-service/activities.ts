@@ -1,4 +1,6 @@
-import { Context, sleep } from '@temporalio/activity'
+import { Context, log, sleep } from '@temporalio/activity'
+import { idempotencyKey } from '../shared/idempotency'
+import { updateOrderStatus } from '../shared/status-client'
 
 export type AuthorizePaymentInput = {
   orderId: string
@@ -30,18 +32,24 @@ export async function authorizePayment({
   orderId,
   amount,
 }: AuthorizePaymentInput): Promise<PaymentAuthorization> {
-
   const { attempt } = Context.current().info
+  const maxAttempts = Number(process.env.DEMO_MAX_ATTEMPTS ?? 3)
+  const key = idempotencyKey('authorize-payment', orderId)
 
-  const idempotencyKey = `authorize:${orderId}`
+  await updateOrderStatus(
+    orderId,
+    'authorizing_payment',
+    `Authorizing payment (attempt ${attempt} of ${maxAttempts})`,
+    { attempt, maxAttempts },
+  )
 
-  console.info('[payment-activity] authorizing payment', {
+  log.info('authorizing payment', {
     orderId,
     amount,
-    attempt,
-    idempotencyKey,
+    idempotencyKey: key,
   })
 
+  Context.current().heartbeat({ attempt, stage: 'authorize' })
   await sleep(700)
 
   if (attempt <= failuresBeforeSuccess) {
@@ -50,7 +58,7 @@ export async function authorizePayment({
 
   return {
     authorizationId: `authorization:${orderId}`,
-    idempotencyKey,
+    idempotencyKey: key,
     authorizedAt: new Date().toISOString(),
   }
 }
@@ -59,20 +67,27 @@ export async function refundPayment({
   orderId,
   authorizationId,
 }: RefundPaymentInput): Promise<PaymentRefund> {
+  const key = idempotencyKey('refund-payment', orderId)
 
-  const idempotencyKey = `refund:${orderId}`
+  await updateOrderStatus(
+    orderId,
+    'refunding',
+    'Refunding authorized payment',
+    { paymentAuthorized: true },
+  )
 
-  console.info('[payment-activity] refunding payment', {
+  log.info('refunding payment', {
     orderId,
     authorizationId,
-    idempotencyKey,
+    idempotencyKey: key,
   })
 
+  Context.current().heartbeat({ stage: 'refund' })
   await sleep(600)
 
   return {
     refundId: `refund:${authorizationId}`,
-    idempotencyKey,
+    idempotencyKey: key,
     refundedAt: new Date().toISOString(),
   }
 }

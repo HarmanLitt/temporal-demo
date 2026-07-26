@@ -2,7 +2,6 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import express from 'express'
-import { createKafka, ensureTopics, topics } from '../shared/kafka'
 import { initialOrderStatus } from '../shared/status'
 import type { Order, OrderStatus, OrderStatusUpdate } from '../../src/types'
 
@@ -49,56 +48,44 @@ function writeStatus(status: OrderStatus): void {
 
 function applyUpdate(update: OrderStatusUpdate): void {
   const current = readStatus(update.orderId)
-
   if (!current) return
 
   const terminal = ['confirmed', 'cancelled', 'failed'].includes(current.status)
   if (terminal) return
 
   const cancelling = current.status === 'cancellation_requested'
-  const allowedDuringCancellation = ['refunding', 'cancelled', 'failed'].includes(
-    update.status,
-  )
+  const allowedDuringCancellation = [
+    'voiding_pos',
+    'refunding',
+    'cancelled',
+    'failed',
+  ].includes(update.status)
   if (cancelling && !allowedDuringCancellation) return
 
   const next = { ...current, ...update }
 
-  if (!['authorizing_payment', 'submitting_pos', 'refunding'].includes(next.status)) {
+  if (
+    ![
+      'authorizing_payment',
+      'submitting_pos',
+      'waiting_restaurant',
+      'voiding_pos',
+      'refunding',
+    ].includes(next.status)
+  ) {
     delete next.attempt
     delete next.maxAttempts
   }
   writeStatus(next)
 }
 
-const kafka = createKafka('quickbite-order-status-service')
-await ensureTopics(kafka)
-
-const consumer = kafka.consumer({ groupId: 'quickbite-order-status-service' })
-await consumer.connect()
-await consumer.subscribe({
-  topics: [topics.orderPlaced, topics.orderStatus],
-  fromBeginning: false,
-})
-await consumer.run({
-  eachMessage: async ({ topic, message }) => {
-    if (topic === topics.orderPlaced) {
-      const order = JSON.parse(message.value?.toString('utf8') ?? '{}') as Order
-
-      writeStatus(initialOrderStatus(order))
-      return
-    }
-
-    const update = JSON.parse(
-      message.value?.toString('utf8') ?? '{}',
-    ) as OrderStatusUpdate
-    applyUpdate(update)
-  },
-})
-
 const app = express()
+app.use(express.json())
+
 app.get('/api/health', (_request, response) => {
   response.json({ service: 'order-status-service', status: 'ok' })
 })
+
 app.get('/api/order-status/:orderId', (request, response) => {
   const status = readStatus(request.params.orderId)
   if (!status) {
@@ -108,16 +95,36 @@ app.get('/api/order-status/:orderId', (request, response) => {
   response.json(status)
 })
 
+app.post('/internal/order-status', (request, response) => {
+  const order = request.body as Order
+  if (!order?.orderId) {
+    response.status(400).json({ error: 'orderId is required' })
+    return
+  }
+
+  if (!readStatus(order.orderId)) {
+    writeStatus(initialOrderStatus(order))
+  }
+  response.status(204).send()
+})
+
+app.patch('/internal/order-status/:orderId', (request, response) => {
+  const update = {
+    ...(request.body as OrderStatusUpdate),
+    orderId: request.params.orderId,
+  }
+  applyUpdate(update)
+  response.status(204).send()
+})
+
 const server = app.listen(port, () => {
   console.info(`[order-status-service] listening on http://localhost:${port}`)
 })
 
 async function shutdown(): Promise<void> {
-
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()))
   })
-  await consumer.disconnect()
   database.close()
 }
 
