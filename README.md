@@ -9,12 +9,7 @@ The flow is as follows:
 2. A user confirms their order
 3. Order confirmation is sent to food delivery app
 4. Order is sent to POS
-5. Order is completed
-6. Order completion is sent from POS to food delivery app
-
-## QuickBite
-
-Food delivery UI demo. Browse a McDonald’s menu, pick modifiers, and place an order. HTTP reads stay synchronous, while order fulfillment is orchestrated by Temporal.
+5. Order waits on resturant acceptance
 
 ## Stack
 
@@ -22,7 +17,6 @@ Food delivery UI demo. Browse a McDonald’s menu, pick modifiers, and place an 
 - Material UI
 - Express
 - Temporal (workflows and activities)
-- SQLite order-status database
 
 ## Run locally
 
@@ -68,16 +62,6 @@ npm run dev:web
 6. The browser polls `GET /api/order-status/:orderId` and displays live progress.
 7. Payment and POS use Temporal retry policies; the demo intentionally fails the first POS attempt.
 8. `POST /api/orders/:orderId/cancel` requests cancellation of the workflow (Temporal's native cancellation). If payment was authorized, the workflow refunds before marking the order cancelled.
-
-## Services
-
-- `services/order-api` — HTTP commands and Temporal client
-- `services/worker` — Temporal worker for the order task queue
-- `services/order-workflow` — workflow, policies, and activity re-exports
-- `services/payment-service/activities.ts` — payment authorization and refund
-- `services/pos-service/activities.ts` — POS submission
-- `services/restaurant-service/activities.ts` — restaurant acceptance
-- `services/order-status-service` — SQLite read model, status HTTP API, and status activities
 
 Task queue default: `quickbite-orders`.
 
