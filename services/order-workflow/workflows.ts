@@ -1,4 +1,5 @@
 import {
+  ActivityCancellationType,
   ApplicationFailure,
   CancellationScope,
   isCancellation,
@@ -22,6 +23,7 @@ const payment = proxyActivities<
 >({
   ...paymentActivityOptions,
   heartbeatTimeout: '2 seconds',
+  cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
 })
 
 const pos = proxyActivities<
@@ -29,6 +31,7 @@ const pos = proxyActivities<
 >({
   ...posActivityOptions,
   heartbeatTimeout: '2 seconds',
+  cancellationType: ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
 })
 
 const restaurant = proxyActivities<
