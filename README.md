@@ -10,6 +10,7 @@ The flow is as follows:
 3. Order confirmation is sent to food delivery app
 4. Order is sent to POS
 5. Order waits on resturant acceptance
+6. Order shows as accepted on the UI
 
 ## Stack
 
