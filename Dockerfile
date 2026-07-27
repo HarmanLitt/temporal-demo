@@ -1,4 +1,6 @@
-FROM node:24-alpine
+# Debian-based image required: @temporalio/core-bridge ships a glibc native
+# module that cannot load on Alpine (musl).
+FROM node:24-slim
 
 WORKDIR /app
 
