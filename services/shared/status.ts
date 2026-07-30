@@ -14,7 +14,8 @@ export function initialOrderStatus(order: Order): OrderAccepted {
     refunded: false,
   }
 }
-
+// This is for building the status update object. Omit 'orderId' | 'status' | 'message' | 'updatedAt' because 
+// they are already included.
 export function buildStatusUpdate(
   orderId: string,
   status: OrderStage,

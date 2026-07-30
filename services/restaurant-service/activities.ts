@@ -28,6 +28,7 @@ export async function waitForRestaurantAcceptance(order: Order): Promise<void> {
 
   const startedAt = Date.now()
   while (Date.now() - startedAt < acceptanceDelayMs) {
+    // what is the purpose of throttling the heartbeats? Is it just keeping the load lower?
     Context.current().heartbeat({
       elapsedMs: Date.now() - startedAt,
       stage: 'restaurant',

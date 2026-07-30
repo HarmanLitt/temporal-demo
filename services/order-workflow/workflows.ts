@@ -55,6 +55,9 @@ export async function orderFulfillmentWorkflow(order: Order): Promise<void> {
       amount: order.total,
     })
 
+    // in prod i wouldnt put a publish activity in the workflow because i dont want it to compensate if it fails
+    // i could remove the sql db and just query the workflow state from the temporal server (once i learn how to do it)
+    // also is it normal to query the workflow state for ui updates?
     await status.publishOrderStatus({
       orderId: order.orderId,
       status: 'payment_authorized',
@@ -166,9 +169,12 @@ async function compensate(
       result.errors.push(error)
     }
   }
-
+  // i would not use authorization object here in prod. I would use the idem key and make an actual
+  // api call to the payment service to check if the payment was authorized. especially if it was a 
+  // handle cancel event. maybe make the payment api non cancellable?
   if (authorization) {
     try {
+      
       await payment.refundPayment({
         orderId,
         authorizationId: authorization.authorizationId,
